@@ -9,16 +9,18 @@ app = Flask(__name__)
 def processar_historico():
     data = request.get_json()
     
-    # Extrair o número de telefone e o nome da instância
+    # Extrair o número de telefone, instância e página atual
     numero_telefone = data.get('numero_telefone')
     instancia = data.get('instancia')
+    page = data.get('page', 1)  # Define o padrão como 1 se não fornecido
     
+    # Verifica se os parâmetros obrigatórios foram fornecidos
     if not numero_telefone:
         return jsonify({'error': 'Número de telefone não fornecido'}), 400
     if not instancia:
         return jsonify({'error': 'Nome da instância não fornecido'}), 400
 
-    # Configurações do endpoint original, agora usando a instância dinamicamente
+    # Configuração da URL do endpoint externo
     url = f'https://evolutionapi.sevenmeet.com/chat/findMessages/{instancia}'
     headers = {
         'Content-Type': 'application/json',
@@ -29,7 +31,8 @@ def processar_historico():
             "key": {
                 "remoteJid": numero_telefone
             }
-        }
+        },
+        "page": page  # Adiciona o parâmetro de paginação 'page' ao payload
     }
 
     try:
