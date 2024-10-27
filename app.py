@@ -9,11 +9,13 @@ app = Flask(__name__)
 def processar_historico():
     data = request.get_json()
     
-    # Extrair o número de telefone, instância e página atual
+    # Extrair o número de telefone e instância
     numero_telefone = data.get('numero_telefone')
     instancia = data.get('instancia')
-    page = data.get('page', 1)  # Define o padrão como 1 se não fornecido
     
+    # Verificar a presença de `page` explicitamente
+    page = data.get('page')  # `page` será None se não estiver no JSON
+
     # Verifica se os parâmetros obrigatórios foram fornecidos
     if not numero_telefone:
         return jsonify({'error': 'Número de telefone não fornecido'}), 400
@@ -26,14 +28,17 @@ def processar_historico():
         'Content-Type': 'application/json',
         'apikey': os.environ.get('API_KEY')  # A API key será definida no Heroku
     }
+    
+    # Montar o payload com ou sem `page`, dependendo de sua presença
     payload = {
         "where": {
             "key": {
                 "remoteJid": numero_telefone
             }
-        },
-        "page": page  # Adiciona o parâmetro de paginação 'page' ao payload
+        }
     }
+    if page is not None:  # Adicionar `page` somente se fornecido
+        payload["page"] = page
 
     try:
         # Faz a requisição ao endpoint original
