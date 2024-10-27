@@ -8,12 +8,18 @@ app = Flask(__name__)
 @app.route('/', methods=['POST'])
 def processar_historico():
     data = request.get_json()
+    
+    # Extrair o número de telefone e o nome da instância
     numero_telefone = data.get('numero_telefone')
+    instancia = data.get('instancia')
+    
     if not numero_telefone:
         return jsonify({'error': 'Número de telefone não fornecido'}), 400
+    if not instancia:
+        return jsonify({'error': 'Nome da instância não fornecido'}), 400
 
-    # Configurações do endpoint original
-    url = 'https://evolutionapi.sevenmeet.com/chat/findMessages/Imob%20PB'
+    # Configurações do endpoint original, agora usando a instância dinamicamente
+    url = f'https://evolutionapi.sevenmeet.com/chat/findMessages/{instancia}'
     headers = {
         'Content-Type': 'application/json',
         'apikey': os.environ.get('API_KEY')  # A API key será definida no Heroku
