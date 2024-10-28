@@ -5,7 +5,7 @@ from datetime import datetime
 
 app = Flask(__name__)
 
-# URL e chave de API do Supabase, obtidos das variáveis de ambiente
+# URL e chave de API do Supabase
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_API_KEY = os.getenv("SUPABASE_API_KEY")
 
@@ -30,14 +30,13 @@ def buscar_ultima_analise(numero_telefone):
         response.raise_for_status()
         data = response.json()
         if data:
-            return data[0]  # Retorna o JSON da última análise
+            return data[0]
         return None
     except requests.exceptions.RequestException as e:
-        print(f"Erro ao buscar análise: {e}")
-        return None
+        return {'error': f"Erro ao buscar análise no Supabase: {e}"}
 
 # Função para buscar mensagens do Evolution API
-def buscar_mensagens(instancia, numero_telefone, page=None, limite_paginas=5):
+def buscar_mensagens(instancia, numero_telefone, page=None, limite_paginas=1):
     url = f'https://evolutionapi.sevenmeet.com/chat/findMessages/{instancia}'
     headers = {
         'Content-Type': 'application/json',
@@ -64,58 +63,72 @@ def buscar_mensagens(instancia, numero_telefone, page=None, limite_paginas=5):
                 break
             payload["page"] = data['nextPage']
         except requests.exceptions.RequestException as e:
-            print(f"Erro ao acessar o Evolution API: {e}")
-            break
+            return {'error': f"Erro ao acessar Evolution API: {e}"}
     return mensagens
 
 @app.route('/', methods=['POST'])
 def processar_historico():
-    data = request.get_json()
-    
-    numero_telefone = data.get('numero_telefone')
-    instancia = data.get('instancia')
-    limite_paginas = data.get('limite_paginas', 1)
+    try:
+        data = request.get_json()
 
-    if not numero_telefone:
-        return jsonify({'error': 'Número de telefone não fornecido'}), 400
-    if not instancia:
-        return jsonify({'error': 'Nome da instância não fornecido'}), 400
+        numero_telefone = data.get('numero_telefone')
+        instancia = data.get('instancia')
+        limite_paginas = data.get('limite_paginas', 1)
 
-    ultima_analise = buscar_ultima_analise(numero_telefone)
-    ultima_data_analise = None
-    if ultima_analise:
-        ultima_data_analise = datetime.fromisoformat(ultima_analise['momento_analise'])
+        if not numero_telefone:
+            return jsonify({'error': 'Número de telefone não fornecido'}), 400
+        if not instancia:
+            return jsonify({'error': 'Nome da instância não fornecido'}), 400
 
-    if ultima_data_analise:
-        novas_mensagens = []
-        mensagens = buscar_mensagens(instancia, numero_telefone, limite_paginas=limite_paginas)
-        for msg in mensagens:
-            timestamp = int(msg.get('messageTimestamp', ''))
-            msg_date = datetime.fromtimestamp(timestamp)
-            if msg_date > ultima_data_analise:
-                novas_mensagens.append(msg)
+        ultima_analise = buscar_ultima_analise(numero_telefone)
+        
+        if isinstance(ultima_analise, dict) and 'error' in ultima_analise:
+            return jsonify(ultima_analise), 500  # Retorna erro se houver falha na busca no Supabase
+        
+        ultima_data_analise = None
+        if ultima_analise:
+            ultima_data_analise = datetime.fromisoformat(ultima_analise['momento_analise'])
 
-        todas_mensagens = ultima_analise['dados']['mensagens'] + novas_mensagens
-    else:
-        todas_mensagens = buscar_mensagens(instancia, numero_telefone, limite_paginas=limite_paginas)
+        if ultima_data_analise:
+            novas_mensagens = []
+            mensagens = buscar_mensagens(instancia, numero_telefone, limite_paginas=limite_paginas)
+            
+            if isinstance(mensagens, dict) and 'error' in mensagens:
+                return jsonify(mensagens), 500  # Retorna erro se houver falha na Evolution API
+            
+            for msg in mensagens:
+                timestamp = int(msg.get('messageTimestamp', ''))
+                msg_date = datetime.fromtimestamp(timestamp)
+                if msg_date > ultima_data_analise:
+                    novas_mensagens.append(msg)
 
-    simplified_messages = []
-    for msg in todas_mensagens:
-        simplified_msg = {
-            'fromMe': msg.get('key', {}).get('fromMe', False),
-            'mensagem': msg.get('message', {}).get('extendedTextMessage', {}).get('text', ''),
-            'dia': datetime.fromtimestamp(int(msg.get('messageTimestamp', ''))).strftime('%d/%m/%Y'),
-            'hora': datetime.fromtimestamp(int(msg.get('messageTimestamp', ''))).strftime('%H:%M:%S')
+            todas_mensagens = ultima_analise['dados']['mensagens'] + novas_mensagens
+        else:
+            todas_mensagens = buscar_mensagens(instancia, numero_telefone, limite_paginas=limite_paginas)
+            
+            if isinstance(todas_mensagens, dict) and 'error' in todas_mensagens:
+                return jsonify(todas_mensagens), 500  # Retorna erro se houver falha na Evolution API
+
+        simplified_messages = []
+        for msg in todas_mensagens:
+            simplified_msg = {
+                'fromMe': msg.get('key', {}).get('fromMe', False),
+                'mensagem': msg.get('message', {}).get('extendedTextMessage', {}).get('text', ''),
+                'dia': datetime.fromtimestamp(int(msg.get('messageTimestamp', ''))).strftime('%d/%m/%Y'),
+                'hora': datetime.fromtimestamp(int(msg.get('messageTimestamp', ''))).strftime('%H:%M:%S')
+            }
+            simplified_messages.append(simplified_msg)
+
+        dados_para_analise = {
+            "numero_telefone": numero_telefone,
+            "momento_analise": datetime.now().isoformat(),
+            "mensagens": simplified_messages
         }
-        simplified_messages.append(simplified_msg)
 
-    dados_para_analise = {
-        "numero_telefone": numero_telefone,
-        "momento_analise": datetime.now().isoformat(),
-        "mensagens": simplified_messages
-    }
+        return jsonify(dados_para_analise), 200
 
-    return jsonify(dados_para_analise), 200
+    except Exception as e:
+        return jsonify({'error': f"Erro interno do servidor: {e}"}), 500
 
 if __name__ == '__main__':
     app.run()
