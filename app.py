@@ -5,31 +5,44 @@ from datetime import datetime
 
 app = Flask(__name__)
 
-@app.route('/', methods=['POST'])
-def processar_historico():
-    data = request.get_json()
-    
-    # Extrair o número de telefone e instância
-    numero_telefone = data.get('numero_telefone')
-    instancia = data.get('instancia')
-    
-    # Verificar a presença de `page` explicitamente
-    page = data.get('page')  # `page` será None se não estiver no JSON
+# URL e chave de API do Supabase, obtidos das variáveis de ambiente
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_API_KEY = os.getenv("SUPABASE_API_KEY")
 
-    # Verifica se os parâmetros obrigatórios foram fornecidos
-    if not numero_telefone:
-        return jsonify({'error': 'Número de telefone não fornecido'}), 400
-    if not instancia:
-        return jsonify({'error': 'Nome da instância não fornecido'}), 400
+# Headers de autenticação para chamadas à API do Supabase
+supabase_headers = {
+    'apikey': SUPABASE_API_KEY,
+    'Authorization': f'Bearer {SUPABASE_API_KEY}',
+    'Content-Type': 'application/json'
+}
 
-    # Configuração da URL do endpoint externo
+# Função para buscar a última análise pelo número de telefone
+def buscar_ultima_analise(numero_telefone):
+    url = f"{SUPABASE_URL}/rest/v1/ConversasAnalises"
+    params = {
+        'select': '*',
+        'telefone': f"eq.{numero_telefone}",
+        'order': 'momento_analise.desc',
+        'limit': '1'
+    }
+    try:
+        response = requests.get(url, headers=supabase_headers, params=params)
+        response.raise_for_status()
+        data = response.json()
+        if data:
+            return data[0]  # Retorna o JSON da última análise
+        return None
+    except requests.exceptions.RequestException as e:
+        print(f"Erro ao buscar análise: {e}")
+        return None
+
+# Função para buscar mensagens do Evolution API
+def buscar_mensagens(instancia, numero_telefone, page=None, limite_paginas=1):
     url = f'https://evolutionapi.sevenmeet.com/chat/findMessages/{instancia}'
     headers = {
         'Content-Type': 'application/json',
-        'apikey': os.environ.get('API_KEY')  # A API key será definida no Heroku
+        'apikey': os.environ.get('API_KEY')
     }
-    
-    # Montar o payload com ou sem `page`, dependendo de sua presença
     payload = {
         "where": {
             "key": {
@@ -37,51 +50,72 @@ def processar_historico():
             }
         }
     }
-    if page is not None:  # Adicionar `page` somente se fornecido
+    if page is not None:
         payload["page"] = page
 
-    try:
-        # Faz a requisição ao endpoint original
-        response = requests.post(url, headers=headers, json=payload)
-        response.raise_for_status()
-        data = response.json()
+    mensagens = []
+    for i in range(limite_paginas):
+        try:
+            response = requests.post(url, headers=headers, json=payload)
+            response.raise_for_status()
+            data = response.json()
+            mensagens.extend(data.get('messages', {}).get('records', []))
+            if 'nextPage' not in data:
+                break
+            payload["page"] = data['nextPage']
+        except requests.exceptions.RequestException as e:
+            print(f"Erro ao acessar o Evolution API: {e}")
+            break
+    return mensagens
 
-        # Processa e simplifica os dados
-        simplified_messages = []
-        messages = data.get('messages', {}).get('records', [])
-        for msg in messages:
-            simplified_msg = {}
+@app.route('/', methods=['POST'])
+def processar_historico():
+    data = request.get_json()
+    
+    numero_telefone = data.get('numero_telefone')
+    instancia = data.get('instancia')
+    limite_paginas = data.get('limite_paginas', 1)
 
-            # Extrai 'fromMe'
-            simplified_msg['fromMe'] = msg.get('key', {}).get('fromMe', False)
+    if not numero_telefone:
+        return jsonify({'error': 'Número de telefone não fornecido'}), 400
+    if not instancia:
+        return jsonify({'error': 'Nome da instância não fornecido'}), 400
 
-            # Extrai 'mensagem'
-            message_content = msg.get('message', {})
-            if 'conversation' in message_content:
-                simplified_msg['mensagem'] = message_content['conversation']
-            elif 'extendedTextMessage' in message_content:
-                simplified_msg['mensagem'] = message_content['extendedTextMessage'].get('text', '')
-            else:
-                simplified_msg['mensagem'] = ''
+    ultima_analise = buscar_ultima_analise(numero_telefone)
+    ultima_data_analise = None
+    if ultima_analise:
+        ultima_data_analise = datetime.fromisoformat(ultima_analise['momento_analise'])
 
-            # Extrai e formata 'dia' (dia/mês/ano)
-            timestamp = msg.get('messageTimestamp', '')
-            if timestamp:
-                timestamp = int(timestamp)
-                date = datetime.fromtimestamp(timestamp)
-                simplified_msg['dia'] = date.strftime('%d/%m/%Y')
-            else:
-                simplified_msg['dia'] = ''
+    if ultima_data_analise:
+        novas_mensagens = []
+        mensagens = buscar_mensagens(instancia, numero_telefone, limite_paginas=limite_paginas)
+        for msg in mensagens:
+            timestamp = int(msg.get('messageTimestamp', ''))
+            msg_date = datetime.fromtimestamp(timestamp)
+            if msg_date > ultima_data_analise:
+                novas_mensagens.append(msg)
 
-            # Adiciona à lista
-            simplified_messages.append(simplified_msg)
+        todas_mensagens = ultima_analise['dados']['mensagens'] + novas_mensagens
+    else:
+        todas_mensagens = buscar_mensagens(instancia, numero_telefone, limite_paginas=limite_paginas)
 
-        return jsonify(simplified_messages), 200
+    simplified_messages = []
+    for msg in todas_mensagens:
+        simplified_msg = {
+            'fromMe': msg.get('key', {}).get('fromMe', False),
+            'mensagem': msg.get('message', {}).get('extendedTextMessage', {}).get('text', ''),
+            'dia': datetime.fromtimestamp(int(msg.get('messageTimestamp', ''))).strftime('%d/%m/%Y'),
+            'hora': datetime.fromtimestamp(int(msg.get('messageTimestamp', ''))).strftime('%H:%M:%S')
+        }
+        simplified_messages.append(simplified_msg)
 
-    except requests.exceptions.RequestException as e:
-        return jsonify({'error': 'Erro ao acessar o endpoint original', 'details': str(e)}), 500
-    except Exception as e:
-        return jsonify({'error': 'Erro interno do servidor', 'details': str(e)}), 500
+    dados_para_analise = {
+        "numero_telefone": numero_telefone,
+        "momento_analise": datetime.now().isoformat(),
+        "mensagens": simplified_messages
+    }
+
+    return jsonify(dados_para_analise), 200
 
 if __name__ == '__main__':
     app.run()
