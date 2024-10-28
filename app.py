@@ -37,7 +37,7 @@ def buscar_ultima_analise(numero_telefone):
         return None
 
 # Função para buscar mensagens do Evolution API
-def buscar_mensagens(instancia, numero_telefone, page=None, limite_paginas=1):
+def buscar_mensagens(instancia, numero_telefone, page=None, limite_paginas=5):
     url = f'https://evolutionapi.sevenmeet.com/chat/findMessages/{instancia}'
     headers = {
         'Content-Type': 'application/json',
