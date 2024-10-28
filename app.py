@@ -18,7 +18,7 @@ supabase_headers = {
 
 # Função para buscar a última análise pelo número de telefone
 def buscar_ultima_analise(numero_telefone):
-    url = f"{SUPABASE_URL}/rest/v1/ConversasAnalises"
+    url = f"{SUPABASE_URL}/rest/v1/conversasanalises"  # Nome exato da tabela
     params = {
         'select': '*',
         'telefone': f"eq.{numero_telefone}",
@@ -30,7 +30,7 @@ def buscar_ultima_analise(numero_telefone):
         response.raise_for_status()
         data = response.json()
         if data:
-            return data[0]
+            return data[0]  # Retorna o JSON da última análise
         return None
     except requests.exceptions.RequestException as e:
         return {'error': f"Erro ao buscar análise no Supabase: {e}"}
