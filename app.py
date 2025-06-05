@@ -37,7 +37,9 @@ def buscar_ultima_analise(numero_telefone, instancia):
 
 @app.route('/', methods=['POST'])
 def processar_historico():
-    data = request.get_json()
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({'error': 'JSON inválido ou não fornecido'}), 400
 
     numero_telefone = data.get('numero_telefone')
     instancia = data.get('instancia')
